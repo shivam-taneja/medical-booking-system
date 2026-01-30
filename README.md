@@ -76,7 +76,6 @@ The CLI repository provides comprehensive testing and monitoring capabilities in
 - Load testing with concurrent users
 - Real-time Redis quota monitoring
 - Database booking monitoring
-- Edge case testing (race conditions, duplicates, rapid requests)
 
 ## Testing Scenarios
 
