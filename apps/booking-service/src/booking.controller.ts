@@ -1,4 +1,7 @@
+import { DISCOUNT_PROCESSED_EVENT, DiscountProcessedDto } from '@app/shared';
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Ctx, EventPattern, Payload, RmqContext } from '@nestjs/microservices';
+import { Channel, Message } from 'amqplib';
 import { BookingService } from './booking.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 
@@ -16,5 +19,20 @@ export class BookingController {
     return this.bookingService.getBookingStatus(id);
   }
 
-  // TODO: Listen for the result from Discount Service
+  @EventPattern(DISCOUNT_PROCESSED_EVENT)
+  handleDiscountProcessed(
+    @Payload() data: DiscountProcessedDto,
+    @Ctx() context: RmqContext,
+  ) {
+    const channel = context.getChannelRef() as Channel;
+    const originalMsg = context.getMessage() as Message;
+
+    try {
+      this.bookingService.handleDiscountResult(data);
+
+      channel.ack(originalMsg);
+    } catch {
+      channel.nack(originalMsg);
+    }
+  }
 }
