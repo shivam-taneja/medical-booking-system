@@ -38,7 +38,7 @@ async function bootstrap() {
       ],
       queue: BOOKING_QUEUE,
       queueOptions: {
-        durable: false,
+        durable: true,
       },
       noAck: false, // We will manually acknowledge messages
     },

@@ -21,7 +21,7 @@ async function bootstrap() {
         ],
         queue: DISCOUNT_QUEUE,
         queueOptions: {
-          durable: false,
+          durable: true,
         },
         noAck: false, // We handle Ack manually
       },

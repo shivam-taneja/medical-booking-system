@@ -45,7 +45,10 @@ import { BookingService } from './booking.service';
               ),
             ],
             queue: DISCOUNT_QUEUE,
-            queueOptions: { durable: false },
+            queueOptions: {
+              durable: true,
+            },
+            persistent: true,
           },
         }),
         inject: [ConfigService],

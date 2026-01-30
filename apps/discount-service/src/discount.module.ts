@@ -27,8 +27,9 @@ import { DiscountService } from './discount.service';
             ],
             queue: BOOKING_QUEUE,
             queueOptions: {
-              durable: false,
+              durable: true,
             },
+            persistent: true,
           },
         }),
         inject: [ConfigService],
