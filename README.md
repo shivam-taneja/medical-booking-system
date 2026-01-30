@@ -62,11 +62,11 @@ The system consists of two decoupled services communicating asynchronously via R
 
 The following scenarios validate the business logic (Rules R1 & R2) and the compensation workflow.
 
-| Scenario        | Inputs                                              | Expected Result                                                                          |
-|-----------------|-----------------------------------------------------|------------------------------------------------------------------------------------------|
-| Positive Case   | Female user, today is birthday, Quota available     | Success: 12% discount applied, status CONFIRMED.                                         |
-| Negative Case A | Male user, Price < 1000                             | Success: No discount applied (doesn't qualify for R1), status CONFIRMED at Base Price.   |
-| Negative Case B | Female user, today is birthday, Quota is full       | Failure: Service B emits failure, Service A updates to REJECTED.                         |
+| Scenario | Inputs | Expected Result |
+| :--- | :--- | :--- |
+| **Positive Case** | Female user, Today is birthday, Quota available | **Success:** 12% discount applied, status `CONFIRMED`. |
+| **Negative Case A** | User ID: `fail_test_user` (or from env) | **Failure:** Business rule validation fails. Status `REJECTED` with reason "User is blacklisted". |
+| **Negative Case B** | Valid User, Daily Quota Exhausted | **Failure:** System limit reached. Status `REJECTED` with reason "Daily discount quota reached". |                       |
 
 ## Technical Design Decisions
 

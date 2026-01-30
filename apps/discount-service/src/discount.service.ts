@@ -36,6 +36,25 @@ export class DiscountService {
     let finalPrice = data.basePrice;
     let reason = '';
 
+    const bannedUser = this.configService.get<string>(
+      'BANNED_USER',
+      'invalid_user',
+    );
+
+    if (data.userId === bannedUser) {
+      this.logger.warn(
+        `Booking ${data.bookingId} REJECTED: User ${bannedUser} is banned.`,
+      );
+
+      this.client.emit(DISCOUNT_PROCESSED_EVENT, {
+        bookingId: data.bookingId,
+        isAllowed: false,
+        finalPrice: data.basePrice,
+        reason: 'User is not authorized to make bookings (Simulated Failure)',
+      });
+      return;
+    }
+
     const now = new Date();
     const nowIST = toZonedTime(now, this.TIMEZONE);
 
