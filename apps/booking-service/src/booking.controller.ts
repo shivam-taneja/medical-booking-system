@@ -20,7 +20,7 @@ export class BookingController {
   }
 
   @EventPattern(DISCOUNT_PROCESSED_EVENT)
-  handleDiscountProcessed(
+  async handleDiscountProcessed(
     @Payload() data: DiscountProcessedDto,
     @Ctx() context: RmqContext,
   ) {
@@ -28,7 +28,7 @@ export class BookingController {
     const originalMsg = context.getMessage() as Message;
 
     try {
-      this.bookingService.handleDiscountResult(data);
+      await this.bookingService.handleDiscountResult(data);
 
       channel.ack(originalMsg);
     } catch {

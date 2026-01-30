@@ -3,65 +3,48 @@ import {
   BookingCreatedDto,
   DiscountProcessedDto,
   RABBITMQ_SERVICE,
-  ServiceItemDto,
 } from '@app/shared';
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
-import { v4 as uuidv4 } from 'uuid';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Booking, BookingStatus } from './booking.entity';
 import { CreateBookingDto } from './dto/create-booking.dto';
-
-enum BookingStatus {
-  PENDING = 'PENDING',
-  CONFIRMED = 'CONFIRMED',
-  REJECTED = 'REJECTED',
-}
-
-export interface BookingRecord {
-  id: string;
-  userId: string;
-  gender: string;
-  dob: string;
-  services: ServiceItemDto[];
-  basePrice: number;
-  finalPrice?: number;
-  status: BookingStatus;
-  failReason?: string;
-  history: string[];
-}
 
 @Injectable()
 export class BookingService {
   private readonly logger = new Logger(BookingService.name);
 
-  private bookings = new Map<string, BookingRecord>();
+  constructor(
+    @Inject(RABBITMQ_SERVICE) private client: ClientProxy,
+    @InjectRepository(Booking)
+    private bookingRepo: Repository<Booking>,
+  ) {}
 
-  constructor(@Inject(RABBITMQ_SERVICE) private client: ClientProxy) {}
-
-  createBooking(data: CreateBookingDto) {
-    const bookingId = uuidv4();
-
-    // Calculate Base Price (Sum of all service prices)
+  async createBooking(data: CreateBookingDto) {
     const basePrice = data.services.reduce((sum, s) => sum + s.price, 0);
+    const initialHistory = [
+      `[${new Date().toISOString()}] Booking Created (Pending)`,
+    ];
 
-    const bookingRecord: BookingRecord = {
-      id: bookingId,
+    const newBooking = this.bookingRepo.create({
       userId: data.userId,
       gender: data.gender,
       dob: data.dob,
       services: data.services,
       basePrice,
       status: BookingStatus.PENDING,
-      history: [`[${new Date().toISOString()}] Booking Created (Pending)`],
-    };
+      history: initialHistory,
+    });
 
-    this.bookings.set(bookingId, bookingRecord);
+    const savedBooking = await this.bookingRepo.save(newBooking);
 
     this.logger.log(
-      `Booking ${bookingId} saved as PENDING. Emitting event to Discount Service...`,
+      `Booking ${savedBooking.id} saved as PENDING. Emitting event to Discount Service...`,
     );
 
     const event: BookingCreatedDto = {
-      bookingId,
+      bookingId: savedBooking.id,
       userId: data.userId,
       gender: data.gender,
       dob: data.dob,
@@ -73,13 +56,14 @@ export class BookingService {
 
     return {
       message: 'Booking request received. Processing...',
-      bookingId,
+      bookingId: savedBooking.id,
       status: 'PENDING',
     };
   }
 
-  getBookingStatus(id: string): BookingRecord {
-    const booking = this.bookings.get(id);
+  async getBookingStatus(id: string) {
+    const booking = await this.bookingRepo.findOne({ where: { id } });
+
     if (!booking) {
       throw new NotFoundException(`Booking with ID ${id} not found`);
     }
@@ -87,15 +71,19 @@ export class BookingService {
     return booking;
   }
 
-  handleDiscountResult(payload: DiscountProcessedDto) {
-    const booking = this.bookings.get(payload.bookingId);
+  async handleDiscountResult(payload: DiscountProcessedDto) {
+    const booking = await this.bookingRepo.findOne({
+      where: { id: payload.bookingId },
+    });
 
     if (!booking) {
       this.logger.error(
-        `Critical: Received result for unknown booking ${payload.bookingId}`,
+        `Critical: Result for unknown booking ${payload.bookingId}`,
       );
       return;
     }
+
+    const history = booking.history || [];
 
     if (payload.isAllowed) {
       booking.status = BookingStatus.CONFIRMED;
@@ -106,7 +94,7 @@ export class BookingService {
           ? 'Discount Applied'
           : 'Standard Price Approved';
 
-      booking.history.push(
+      history.push(
         `[${new Date().toISOString()}] ${statusMsg}. Status: ${BookingStatus.CONFIRMED}`,
       );
 
@@ -115,7 +103,7 @@ export class BookingService {
       );
     } else {
       booking.status = BookingStatus.REJECTED;
-      booking.failReason = payload.reason;
+      booking.failReason = payload.reason || null;
       booking.history.push(
         `[${new Date().toISOString()}] Failed: ${payload.reason}. Status: ${BookingStatus.REJECTED}`,
       );
@@ -125,6 +113,8 @@ export class BookingService {
       );
     }
 
-    this.bookings.set(payload.bookingId, booking);
+    booking.history = history;
+
+    await this.bookingRepo.save(booking);
   }
 }
