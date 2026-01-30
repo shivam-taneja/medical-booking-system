@@ -158,12 +158,17 @@ export class DiscountService {
   }
 
   private checkBirthday(dobString: string, todayIST: Date): boolean {
-    const dob = new Date(dobString);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const [year, month, day] = dobString.split('-').map(Number);
 
-    // Compare Month and Date
-    return (
-      todayIST.getDate() === dob.getDate() &&
-      todayIST.getMonth() === dob.getMonth()
-    );
+      const currentMonth = todayIST.getMonth() + 1;
+      const currentDay = todayIST.getDate();
+
+      return currentDay === day && currentMonth === month;
+    } catch {
+      this.logger.error(`Invalid DOB format: ${dobString}`);
+      return false;
+    }
   }
 }
