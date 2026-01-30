@@ -26,7 +26,11 @@ export class DiscountController {
       channel.ack(originalMsg);
     } catch (error) {
       this.logger.error(`Error processing booking: ${error}`);
-      channel.nack(originalMsg);
+
+      // 2nd arg false = global (ignore),
+      // 3rd arg false = requeue (false means DISCARD/Send to DLQ)
+      // This prevents the infinite loop of crashing/restarting on the same message.
+      channel.nack(originalMsg, false, false);
     }
   }
 }

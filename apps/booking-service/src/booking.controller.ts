@@ -1,5 +1,5 @@
 import { DISCOUNT_PROCESSED_EVENT, DiscountProcessedDto } from '@app/shared';
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Logger, Param, Post } from '@nestjs/common';
 import { Ctx, EventPattern, Payload, RmqContext } from '@nestjs/microservices';
 import { Channel, Message } from 'amqplib';
 import { BookingService } from './booking.service';
@@ -7,6 +7,8 @@ import { CreateBookingDto } from './dto/create-booking.dto';
 
 @Controller('booking')
 export class BookingController {
+  private readonly logger = new Logger(BookingController.name);
+
   constructor(private readonly bookingService: BookingService) {}
 
   @Post()
@@ -28,11 +30,17 @@ export class BookingController {
     const originalMsg = context.getMessage() as Message;
 
     try {
+      this.logger.log(
+        `Received Discount Result for Booking: ${data.bookingId}`,
+      );
+
       await this.bookingService.handleDiscountResult(data);
 
       channel.ack(originalMsg);
-    } catch {
-      channel.nack(originalMsg);
+    } catch (error) {
+      this.logger.error(`Error processing discount result: ${error}`);
+
+      channel.nack(originalMsg, false, false);
     }
   }
 }
