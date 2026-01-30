@@ -74,7 +74,7 @@ The following scenarios validate the business logic (Rules R1 & R2) and the comp
 
 **Persistence:**
 
-* Booking Service: Uses an In-Memory Map (simulating a database) to store transaction states (PENDING, CONFIRMED, REJECTED).
+* Booking Service: Persists transaction states (PENDING, CONFIRMED, REJECTED) in PostgreSQL using TypeORM, ensuring data durability and audit trails via a JSON-based history log.
 * Discount Service: Uses Redis INCR commands to ensure atomic counting of daily discounts, preventing race conditions under high load.
 
 **Error Handling:** The system implements manual acknowledgment (ack) in RabbitMQ. Messages are only removed from the queue after they have been successfully processed and persisted.
