@@ -23,6 +23,16 @@ The system consists of two decoupled services communicating asynchronously via R
     * **RabbitMQ:** Message broker for asynchronous communication.
     * **Redis:** In-memory store for maintaining the daily discount quota.
 
+## Diagrams
+
+### System Architecture
+
+![System Architecture](./images/system-architecture-diagram.png)
+
+### High-Level Flow
+
+![High-Level Flow](./images/high-level-flow.png)
+
 ## Prerequisites
 
 * Node.js (v22)
