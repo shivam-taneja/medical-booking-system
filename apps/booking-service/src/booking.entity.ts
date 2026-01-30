@@ -3,6 +3,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
@@ -14,6 +15,8 @@ export enum BookingStatus {
 }
 
 @Entity()
+@Index('idx_booking_created_at', ['createdAt'])
+@Index('idx_booking_status_created_at', ['status', 'createdAt'])
 export class Booking {
   @PrimaryGeneratedColumn('uuid')
   id: string;
