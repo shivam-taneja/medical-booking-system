@@ -3,14 +3,32 @@ import {
   BookingCreatedDto,
   DiscountProcessedDto,
   RABBITMQ_SERVICE,
+  ServiceItemDto,
 } from '@app/shared';
-import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
 import { InjectRepository } from '@nestjs/typeorm';
 import { lastValueFrom } from 'rxjs';
 import { Repository } from 'typeorm';
 import { Booking, BookingStatus } from './booking.entity';
 import { CreateBookingDto } from './dto/create-booking.dto';
+
+const MEDICAL_SERVICES = {
+  'General Consultation': 500,
+  'Blood Test': 300,
+  'X-Ray': 1200, // High-Value R1
+  'MRI Scan': 5000,
+  'Dental Cleaning': 800,
+  Vaccination: 150,
+} as const;
+
+type MedicalServiceName = keyof typeof MEDICAL_SERVICES;
 
 @Injectable()
 export class BookingService {
@@ -23,7 +41,23 @@ export class BookingService {
   ) {}
 
   async createBooking(data: CreateBookingDto) {
-    const basePrice = data.services.reduce((sum, s) => sum + s.price, 0);
+    const selectedServices: ServiceItemDto[] = data.serviceNames.map(
+      (name: MedicalServiceName) => {
+        const price = MEDICAL_SERVICES[name];
+
+        if (price === undefined) {
+          throw new BadRequestException(
+            `Service ${name} is not available. Available services: ${Object.keys(
+              MEDICAL_SERVICES,
+            ).join(', ')}`,
+          );
+        }
+
+        return { name, price };
+      },
+    );
+
+    const basePrice = selectedServices.reduce((sum, s) => sum + s.price, 0);
     const initialHistory = [
       `[${new Date().toISOString()}] Booking Created (Pending)`,
     ];
@@ -32,30 +66,28 @@ export class BookingService {
       userId: data.userId,
       gender: data.gender,
       dob: data.dob,
-      services: data.services,
+      services: selectedServices,
       basePrice,
       status: BookingStatus.PENDING,
       history: initialHistory,
     });
 
-    let savedBooking: Booking | null = null;
+    const savedBooking = await this.bookingRepo.save(newBooking);
+
+    this.logger.log(
+      `Booking ${savedBooking.id} saved as PENDING. Emitting event to Discount Service...`,
+    );
+
+    const event: BookingCreatedDto = {
+      bookingId: savedBooking.id,
+      userId: data.userId,
+      gender: data.gender,
+      dob: data.dob,
+      services: selectedServices,
+      basePrice,
+    };
 
     try {
-      savedBooking = await this.bookingRepo.save(newBooking);
-
-      this.logger.log(
-        `Booking ${savedBooking.id} saved as PENDING. Emitting event to Discount Service...`,
-      );
-
-      const event: BookingCreatedDto = {
-        bookingId: savedBooking.id,
-        userId: data.userId,
-        gender: data.gender,
-        dob: data.dob,
-        services: data.services,
-        basePrice,
-      };
-
       await lastValueFrom(this.client.emit(BOOKING_CREATED_EVENT, event));
 
       return {

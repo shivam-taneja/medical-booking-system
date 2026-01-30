@@ -1,25 +1,11 @@
-import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
   IsDateString,
   IsEnum,
   IsNotEmpty,
-  IsNumber,
   IsString,
-  Min,
-  ValidateNested,
 } from 'class-validator';
-
-class CreateBookingServiceItemDto {
-  @IsString()
-  @IsNotEmpty()
-  name: string;
-
-  @IsNumber()
-  @Min(0)
-  price: number;
-}
 
 export class CreateBookingDto {
   @IsString()
@@ -36,8 +22,7 @@ export class CreateBookingDto {
   dob: string;
 
   @IsArray()
+  @IsString({ each: true })
   @ArrayMinSize(1, { message: 'At least one service must be selected' })
-  @ValidateNested({ each: true })
-  @Type(() => CreateBookingServiceItemDto)
-  services: CreateBookingServiceItemDto[];
+  serviceNames: string[];
 }
