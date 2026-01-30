@@ -89,6 +89,9 @@ The following scenarios validate the business logic (Rules R1 & R2) and the comp
 * **Error Handling:** The system implements manual acknowledgment (`ack`) in RabbitMQ. Messages are only removed from the queue after they have been successfully processed and persisted.
 * **Self-Healing Data:** Redis keys for daily quotas are set with a **TTL (Time-To-Live)** of 48 hours. This prevents memory leaks and ensures old data is automatically purged.
 
+**5. Resilience (Cron Cleanup)**
+* **Ghost Booking Resolution**: In a distributed system, a message might be lost or the Discount Service might crash before replying. I've implemented a Timeout Cron Job that runs every minute to identify bookings stuck in PENDING for over 5 minutes and automatically marks them as REJECTED.
+
 ## Troubleshooting
 
 ### Resetting Daily Quota
