@@ -7,7 +7,7 @@ import { BookingService } from './booking.service';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: './env',
+      envFilePath: '.env',
     }),
   ],
   controllers: [BookingController],
