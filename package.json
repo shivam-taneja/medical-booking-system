@@ -14,7 +14,7 @@
     "debug:booking": "pnpm run du && nest start booking-service --debug --watch",
     "d:discount": "pnpm run du && nest start discount-service --watch",
     "debug:discount": "pnpm run du && nest start discount-service --debug --watch",
-    "d": "pnpm run du && concurrently \"pnpm run dev:booking\" \"pnpm run dev:discount\""
+    "dev": "pnpm run du && concurrently \"pnpm run d:booking\" \"pnpm run d:discount\""
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
