@@ -29,8 +29,6 @@ The system consists of two decoupled services communicating asynchronously via R
 * Docker & Docker Compose
 * pnpm
 
----
-
 ## Installation & Setup
 
 1.  **Clone the repository**
@@ -58,6 +56,17 @@ The system consists of two decoupled services communicating asynchronously via R
     ```bash
     pnpm dev
     ```
+
+## Related Repository
+
+**CLI Testing & Monitoring Tools:** [medical-booking-cli](https://github.com/shivam-taneja/medical-booking-cli.git)
+
+The CLI repository provides comprehensive testing and monitoring capabilities including:
+- Positive/banned/quota scenario testing
+- Load testing with concurrent users
+- Real-time Redis quota monitoring
+- Database booking monitoring
+- Edge case testing (race conditions, duplicates, rapid requests)
 
 ## Testing Scenarios
 
