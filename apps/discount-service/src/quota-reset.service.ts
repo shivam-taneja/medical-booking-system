@@ -19,7 +19,7 @@ export class QuotaResetService {
   }
 
   // Runs every day at midnight IST
-  @Cron('30 18 * * *', {
+  @Cron('0 0 * * *', {
     timeZone: 'Asia/Kolkata',
   })
   async resetDailyQuota() {
