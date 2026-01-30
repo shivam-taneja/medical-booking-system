@@ -2,11 +2,15 @@ import { BOOKING_QUEUE, RABBITMQ_SERVICE } from '@app/shared';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ClientsModule, Transport } from '@nestjs/microservices';
+import { ScheduleModule } from '@nestjs/schedule';
 import { DiscountController } from './discount.controller';
 import { DiscountService } from './discount.service';
+import { QuotaResetService } from './quota-reset.service';
 
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
+
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
@@ -37,6 +41,6 @@ import { DiscountService } from './discount.service';
     ]),
   ],
   controllers: [DiscountController],
-  providers: [DiscountService],
+  providers: [DiscountService, QuotaResetService],
 })
 export class DiscountModule {}
