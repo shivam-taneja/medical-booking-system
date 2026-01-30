@@ -7,6 +7,7 @@ import {
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
 import { InjectRepository } from '@nestjs/typeorm';
+import { lastValueFrom } from 'rxjs';
 import { Repository } from 'typeorm';
 import { Booking, BookingStatus } from './booking.entity';
 import { CreateBookingDto } from './dto/create-booking.dto';
@@ -37,28 +38,41 @@ export class BookingService {
       history: initialHistory,
     });
 
-    const savedBooking = await this.bookingRepo.save(newBooking);
+    let savedBooking: Booking | null = null;
 
-    this.logger.log(
-      `Booking ${savedBooking.id} saved as PENDING. Emitting event to Discount Service...`,
-    );
+    try {
+      savedBooking = await this.bookingRepo.save(newBooking);
 
-    const event: BookingCreatedDto = {
-      bookingId: savedBooking.id,
-      userId: data.userId,
-      gender: data.gender,
-      dob: data.dob,
-      services: data.services,
-      basePrice,
-    };
+      this.logger.log(
+        `Booking ${savedBooking.id} saved as PENDING. Emitting event to Discount Service...`,
+      );
 
-    this.client.emit(BOOKING_CREATED_EVENT, event);
+      const event: BookingCreatedDto = {
+        bookingId: savedBooking.id,
+        userId: data.userId,
+        gender: data.gender,
+        dob: data.dob,
+        services: data.services,
+        basePrice,
+      };
 
-    return {
-      message: 'Booking request received. Processing...',
-      bookingId: savedBooking.id,
-      status: 'PENDING',
-    };
+      await lastValueFrom(this.client.emit(BOOKING_CREATED_EVENT, event));
+
+      return {
+        message: 'Booking request received. Processing...',
+        bookingId: savedBooking.id,
+        status: 'PENDING',
+      };
+    } catch (error) {
+      // If emit failed, we delete the booking
+      // to prevent a "Ghost Booking" that stays PENDING forever.
+
+      if (savedBooking && savedBooking.id) {
+        await this.bookingRepo.delete(savedBooking.id);
+      }
+
+      throw error;
+    }
   }
 
   async getBookingStatus(id: string) {
