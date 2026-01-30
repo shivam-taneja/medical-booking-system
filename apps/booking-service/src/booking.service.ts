@@ -57,7 +57,7 @@ export class BookingService {
     this.bookings.set(bookingId, bookingRecord);
 
     this.logger.log(
-      `Booking ${bookingId} saved as PENDING. Event ${BOOKING_CREATED_EVENT} emmited.`,
+      `Booking ${bookingId} saved as PENDING. Emitting event to Discount Service...`,
     );
 
     const event: BookingCreatedDto = {
@@ -100,12 +100,18 @@ export class BookingService {
     if (payload.isAllowed) {
       booking.status = BookingStatus.CONFIRMED;
       booking.finalPrice = payload.finalPrice;
+
+      const statusMsg =
+        payload.finalPrice < booking.basePrice
+          ? 'Discount Applied'
+          : 'Standard Price Approved';
+
       booking.history.push(
-        `[${new Date().toISOString()}] Discount Applied. Status: ${BookingStatus.CONFIRMED}`,
+        `[${new Date().toISOString()}] ${statusMsg}. Status: ${BookingStatus.CONFIRMED}`,
       );
 
       this.logger.log(
-        `Booking ${payload.bookingId} CONFIRMED. Final Price: $${payload.finalPrice}`,
+        `Booking ${payload.bookingId} CONFIRMED. (${statusMsg}) Final Price: $${payload.finalPrice}`,
       );
     } else {
       booking.status = BookingStatus.REJECTED;
