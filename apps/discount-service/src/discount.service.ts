@@ -119,7 +119,8 @@ export class DiscountService {
           quotaConsumed = false;
         } else {
           // Apply 12% Discount
-          finalPrice = Math.floor(data.basePrice * 0.88);
+          const discountMultiplier = 0.88;
+          finalPrice = Math.round(data.basePrice * discountMultiplier);
           this.logger.log(`Discount Applied! Final Price: ${finalPrice}`);
         }
       } else {
