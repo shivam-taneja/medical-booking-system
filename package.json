@@ -8,11 +8,13 @@
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"apps/**/*.ts\" \"libs/**/*.ts\"",
-    "start:booking": "nest start booking-service --watch",
-    "debug:booking": "nest start booking-service --debug --watch",
-    "start:discount": "nest start discount-service --watch",
-    "debug:discount": "nest start discount-service --debug --watch",
-    "dev": "concurrently \"pnpm run start:booking\" \"pnpm run start:discount\""
+    "du": "docker-compose up -d",
+    "dd": "docker-compose down",
+    "d:booking": "pnpm run du && nest start booking-service --watch",
+    "debug:booking": "pnpm run du && nest start booking-service --debug --watch",
+    "d:discount": "pnpm run du && nest start discount-service --watch",
+    "debug:discount": "pnpm run du && nest start discount-service --debug --watch",
+    "d": "pnpm run du && concurrently \"pnpm run dev:booking\" \"pnpm run dev:discount\""
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
