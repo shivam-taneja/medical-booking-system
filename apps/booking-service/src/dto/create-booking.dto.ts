@@ -36,7 +36,7 @@ export class CreateBookingDto {
   dob: string;
 
   @IsArray()
-  @ArrayMinSize(1)
+  @ArrayMinSize(1, { message: 'At least one service must be selected' })
   @ValidateNested({ each: true })
   @Type(() => CreateBookingServiceItemDto)
   services: CreateBookingServiceItemDto[];

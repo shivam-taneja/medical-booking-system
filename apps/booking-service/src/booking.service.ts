@@ -72,6 +72,16 @@ export class BookingService {
   }
 
   async handleDiscountResult(payload: DiscountProcessedDto) {
+    const status = payload.isAllowed
+      ? BookingStatus.CONFIRMED
+      : BookingStatus.REJECTED;
+    const failReason = payload.reason || null;
+    const finalPrice = payload.finalPrice;
+
+    const logEntry = payload.isAllowed
+      ? `[${new Date().toISOString()}] Discount Processed. Status: ${BookingStatus.CONFIRMED}. Price: ${finalPrice}`
+      : `[${new Date().toISOString()}] Failed: ${payload.reason}. Status: ${BookingStatus.REJECTED}`;
+
     const booking = await this.bookingRepo.findOne({
       where: { id: payload.bookingId },
     });
@@ -83,38 +93,20 @@ export class BookingService {
       return;
     }
 
-    const history = booking.history || [];
-
-    if (payload.isAllowed) {
-      booking.status = BookingStatus.CONFIRMED;
-      booking.finalPrice = payload.finalPrice;
-
-      const statusMsg =
-        payload.finalPrice < booking.basePrice
-          ? 'Discount Applied'
-          : 'Standard Price Approved';
-
-      history.push(
-        `[${new Date().toISOString()}] ${statusMsg}. Status: ${BookingStatus.CONFIRMED}`,
-      );
-
-      this.logger.log(
-        `Booking ${payload.bookingId} CONFIRMED. (${statusMsg}) Final Price: $${payload.finalPrice}`,
-      );
-    } else {
-      booking.status = BookingStatus.REJECTED;
-      booking.failReason = payload.reason || null;
-      booking.history.push(
-        `[${new Date().toISOString()}] Failed: ${payload.reason}. Status: ${BookingStatus.REJECTED}`,
-      );
-
+    if (booking.status !== BookingStatus.PENDING) {
       this.logger.warn(
-        `Booking ${payload.bookingId} REJECTED. Reason: ${payload.reason}`,
+        `Booking ${booking.id} is not PENDING (Current: ${booking.status}). Ignoring Discount result.`,
       );
+      return;
     }
 
-    booking.history = history;
+    booking.status = status;
+    booking.finalPrice = finalPrice;
+    booking.failReason = failReason;
+    booking.history.push(logEntry);
 
     await this.bookingRepo.save(booking);
+
+    this.logger.log(`Booking ${booking.id} updated to ${status}`);
   }
 }
