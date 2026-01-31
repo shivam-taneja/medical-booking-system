@@ -27,6 +27,14 @@ export class DiscountController {
     } catch (error) {
       this.logger.error(`Error processing booking: ${error}`);
 
+      await this.discountService.emitResult({
+        bookingId: data.bookingId,
+        isAllowed: false,
+        finalPrice: data.basePrice,
+        reason: 'Internal System Error (Discount Service Failed)',
+        traceId: data.traceId,
+      });
+
       // 2nd arg false = global (ignore),
       // 3rd arg false = requeue (false means DISCARD/Send to DLQ)
       // This prevents the infinite loop of crashing/restarting on the same message.
