@@ -25,6 +25,9 @@ export class Booking {
   userId: string;
 
   @Column({ type: 'text' })
+  userName: string;
+
+  @Column({ type: 'text' })
   gender: string;
 
   @Column({ type: 'text' })

@@ -16,19 +16,20 @@ import { ClientProxy } from '@nestjs/microservices';
 import { InjectRepository } from '@nestjs/typeorm';
 import { lastValueFrom } from 'rxjs';
 import { Repository } from 'typeorm';
+import { v4 as uuidv4 } from 'uuid';
 import { Booking, BookingStatus } from './booking.entity';
 import { CreateBookingDto } from './dto/create-booking.dto';
 
-const MEDICAL_SERVICES = {
-  'General Consultation': 500,
-  'Blood Test': 300,
-  'X-Ray': 1200, // High-Value R1
-  'MRI Scan': 5000,
-  'Dental Cleaning': 800,
-  Vaccination: 150,
-} as const;
-
-type MedicalServiceName = keyof typeof MEDICAL_SERVICES;
+const MEDICAL_SERVICES_DATA = [
+  { name: 'General Consultation', price: 500, gender: 'All' },
+  { name: 'Blood Test', price: 300, gender: 'All' },
+  { name: 'X-Ray', price: 1200, gender: 'All' },
+  { name: 'MRI Scan', price: 5000, gender: 'All' },
+  { name: 'Dental Cleaning', price: 800, gender: 'All' },
+  { name: 'Vaccination', price: 150, gender: 'All' },
+  { name: 'Mammogram', price: 2000, gender: 'Female' },
+  { name: 'Prostate Exam', price: 1500, gender: 'Male' },
+];
 
 @Injectable()
 export class BookingService {
@@ -40,22 +41,39 @@ export class BookingService {
     private bookingRepo: Repository<Booking>,
   ) {}
 
+  getAvailableServices(genderInput: string) {
+    const gender = genderInput ? genderInput.toLowerCase() : 'all';
+
+    return MEDICAL_SERVICES_DATA.filter((s) => {
+      if (s.gender === 'All') return true;
+      if (gender === 'male' && s.gender === 'Male') return true;
+      if (gender === 'female' && s.gender === 'Female') return true;
+
+      return false;
+    });
+  }
+
   async createBooking(data: CreateBookingDto) {
-    const selectedServices: ServiceItemDto[] = data.serviceNames.map(
-      (name: MedicalServiceName) => {
-        const price = MEDICAL_SERVICES[name];
-
-        if (price === undefined) {
-          throw new BadRequestException(
-            `Service ${name} is not available. Available services: ${Object.keys(
-              MEDICAL_SERVICES,
-            ).join(', ')}`,
-          );
-        }
-
-        return { name, price };
-      },
+    const userId = uuidv4();
+    const traceId = uuidv4();
+    this.logger.log(
+      `[TraceID: ${traceId}] Incoming booking request for user ${userId}`,
     );
+
+    const validServices = this.getAvailableServices(data.gender);
+    const selectedServices: ServiceItemDto[] = [];
+
+    for (const name of data.serviceNames) {
+      const serviceDef = validServices.find((s) => s.name === name);
+
+      if (!serviceDef) {
+        throw new BadRequestException(
+          `Service '${name}' is not available for gender '${data.gender}'`,
+        );
+      }
+
+      selectedServices.push({ name: serviceDef.name, price: serviceDef.price });
+    }
 
     const basePrice = selectedServices.reduce((sum, s) => sum + s.price, 0);
     const initialHistory = [
@@ -63,7 +81,8 @@ export class BookingService {
     ];
 
     const newBooking = this.bookingRepo.create({
-      userId: data.userId,
+      userId: userId,
+      userName: data.userName,
       gender: data.gender,
       dob: data.dob,
       services: selectedServices,
@@ -75,16 +94,17 @@ export class BookingService {
     const savedBooking = await this.bookingRepo.save(newBooking);
 
     this.logger.log(
-      `Booking ${savedBooking.id} saved as PENDING. Emitting event to Discount Service...`,
+      `[TraceID: ${traceId}] Booking ${savedBooking.id} saved. Emitting event...`,
     );
 
     const event: BookingCreatedDto = {
       bookingId: savedBooking.id,
-      userId: data.userId,
+      userId: userId,
       gender: data.gender,
       dob: data.dob,
       services: selectedServices,
       basePrice,
+      traceId,
     };
 
     try {
@@ -93,11 +113,15 @@ export class BookingService {
       return {
         message: 'Booking request received. Processing...',
         bookingId: savedBooking.id,
+        traceId,
         status: 'PENDING',
       };
     } catch (error) {
       // If emit failed, we delete the booking
       // to prevent a "Ghost Booking" that stays PENDING forever.
+      this.logger.error(
+        `[TraceID: ${traceId}] Failed to emit event. Rolling back.`,
+      );
 
       if (savedBooking && savedBooking.id) {
         await this.bookingRepo.delete(savedBooking.id);
@@ -118,30 +142,32 @@ export class BookingService {
   }
 
   async handleDiscountResult(payload: DiscountProcessedDto) {
+    const { traceId, bookingId, isAllowed, finalPrice, reason } = payload;
+    const logPrefix = traceId ? `[TraceID: ${traceId}]` : '';
+
+    this.logger.log(`${logPrefix} Processing discount result for ${bookingId}`);
+
     const status = payload.isAllowed
       ? BookingStatus.CONFIRMED
       : BookingStatus.REJECTED;
     const failReason = payload.reason || null;
-    const finalPrice = payload.finalPrice;
 
-    const logEntry = payload.isAllowed
-      ? `[${new Date().toISOString()}] Discount Processed. Status: ${BookingStatus.CONFIRMED}. Price: ${finalPrice}`
-      : `[${new Date().toISOString()}] Failed: ${payload.reason}. Status: ${BookingStatus.REJECTED}`;
+    const logEntry = isAllowed
+      ? `[${new Date().toISOString()}] Confirmed. Price: ${finalPrice}`
+      : `[${new Date().toISOString()}] Rejected: ${reason}`;
 
     const booking = await this.bookingRepo.findOne({
       where: { id: payload.bookingId },
     });
 
     if (!booking) {
-      this.logger.error(
-        `Critical: Result for unknown booking ${payload.bookingId}`,
-      );
+      this.logger.error(`${logPrefix} Critical: Unknown booking ${bookingId}`);
       return;
     }
 
     if (booking.status !== BookingStatus.PENDING) {
       this.logger.warn(
-        `Booking ${booking.id} is not PENDING (Current: ${booking.status}). Ignoring Discount result.`,
+        `${logPrefix} Booking ${booking.id} is already ${booking.status}. Ignoring.`,
       );
       return;
     }
@@ -153,6 +179,6 @@ export class BookingService {
 
     await this.bookingRepo.save(booking);
 
-    this.logger.log(`Booking ${booking.id} updated to ${status}`);
+    this.logger.log(`${logPrefix} Booking ${booking.id} updated to ${status}`);
   }
 }

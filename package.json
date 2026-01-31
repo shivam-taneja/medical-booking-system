@@ -9,7 +9,7 @@
     "build": "nest build",
     "format": "prettier --write \"apps/**/*.ts\" \"libs/**/*.ts\"",
     "du": "docker-compose up -d",
-    "dd": "docker-compose down",
+    "dd": "docker-compose down -v",
     "d:booking": "pnpm run du && nest start booking-service --watch",
     "debug:booking": "pnpm run du && nest start booking-service --debug --watch",
     "d:discount": "pnpm run du && nest start discount-service --watch",
@@ -34,7 +34,8 @@
     "pg": "^8.17.2",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "typeorm": "^0.3.28"
+    "typeorm": "^0.3.28",
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",

@@ -10,6 +10,7 @@ export class BookingCreatedDto {
   dob: string; // Format: YYYY-MM-DD
   services: ServiceItemDto[];
   basePrice: number;
+  traceId: string;
 }
 
 export class DiscountProcessedDto {
@@ -17,4 +18,5 @@ export class DiscountProcessedDto {
   isAllowed: boolean;
   finalPrice: number;
   reason?: string;
+  traceId: string;
 }

@@ -10,7 +10,7 @@ import {
 export class CreateBookingDto {
   @IsString()
   @IsNotEmpty()
-  userId: string;
+  userName: string;
 
   @IsString()
   @IsEnum(['Male', 'Female', 'Other'], {
