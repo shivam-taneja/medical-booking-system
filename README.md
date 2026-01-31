@@ -23,13 +23,16 @@ The system consists of two decoupled services communicating asynchronously via R
     * **RabbitMQ:** Message broker for asynchronous communication.
     * **Redis:** In-memory store for maintaining the daily discount quota.
 
-## Diagrams
+## Video Demos
+- **Video 1: Terminal Demo (Functional Testing)** - https://youtu.be/LDqP2P7_ADw
+- **Video 2: Code Explanation (with Architecture)** - https://youtu.be/By9KBUVodRw
+- **Video 3: DevOps Logs (Observability)** - https://youtu.be/0cFfeuwR850
 
-### System Architecture
+## System Architecture
 
 ![System Architecture](./images/system-architecture-diagram.png)
 
-### High-Level Flow
+## High-Level Flow
 
 ![High-Level Flow](./images/high-level-flow.png)
 
