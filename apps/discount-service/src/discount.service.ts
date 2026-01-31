@@ -7,7 +7,7 @@ import {
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ClientProxy } from '@nestjs/microservices';
-import { format } from 'date-fns';
+import { format, isValid, parse } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
 import Redis from 'ioredis';
 import { lastValueFrom } from 'rxjs';
@@ -30,7 +30,9 @@ export class DiscountService {
   }
 
   async processDiscount(data: BookingCreatedDto) {
-    const { bookingId } = data;
+    const { bookingId, traceId } = data;
+    const logPrefix = `[TraceID: ${traceId}]`;
+
     const idempotencyKey = `processed_booking:${bookingId}`;
 
     const isProcessed = await this.redis.set(
@@ -43,13 +45,13 @@ export class DiscountService {
 
     if (!isProcessed) {
       this.logger.warn(
-        `Duplicate event detected for Booking ${bookingId}. Skipping.`,
+        `${logPrefix} Duplicate event detected for Booking ${bookingId}. Skipping.`,
       );
       return;
     }
 
     this.logger.log(
-      `Processing discount logic for Booking ${data.bookingId}...`,
+      `${logPrefix} Processing discount logic for Booking ${bookingId}...`,
     );
 
     let isAllowed = true;
@@ -66,13 +68,14 @@ export class DiscountService {
 
       if (data.userId === bannedUser) {
         this.logger.warn(
-          `Booking ${data.bookingId} REJECTED: User ${bannedUser} is banned.`,
+          `${logPrefix} Booking REJECTED: User ${bannedUser} is banned.`,
         );
         await this.emitResult({
           bookingId,
           isAllowed: false,
           finalPrice: data.basePrice,
           reason: 'User is not authorized (Simulated Failure)',
+          traceId,
         });
         return;
       }
@@ -82,14 +85,14 @@ export class DiscountService {
 
       // RULE R1: Female Birthday OR High Value
       const isFemale = data.gender.toLowerCase() === 'female';
-      const isBirthday = this.checkBirthday(data.dob, nowIST);
+      const isBirthday = this.checkBirthday(data.dob, nowIST, logPrefix);
       const isHighValue = data.basePrice > 1000;
 
       const qualifiesForDiscount = (isFemale && isBirthday) || isHighValue;
 
       if (qualifiesForDiscount) {
         this.logger.log(
-          `Booking ${data.bookingId} qualifies for R1 Discount. Checking Quota...`,
+          `${logPrefix} Qualifies for R1 Discount (Female+Bday: ${isFemale && isBirthday}, HighValue: ${isHighValue}). Checking Quota...`,
         );
 
         const todayString = format(nowIST, 'yyyy-MM-dd');
@@ -106,13 +109,13 @@ export class DiscountService {
         const limit = this.configService.get<number>('R2_QUOTA_LIMIT', 100);
 
         this.logger.log(
-          `Daily Quota Check [${todayString}]: ${currentCount}/${limit}`,
+          `${logPrefix} Daily Quota Check [${todayString}]: ${currentCount}/${limit}`,
         );
 
         if (currentCount > limit) {
           isAllowed = false;
           reason = 'Daily discount quota reached. Please try again tomorrow.';
-          this.logger.warn(`Booking ${data.bookingId} REJECTED: ${reason}`);
+          this.logger.warn(`${logPrefix} REJECTED: ${reason}`);
 
           // Compensate immediately for the failed business check
           await this.redis.decr(redisKey);
@@ -121,11 +124,13 @@ export class DiscountService {
           // Apply 12% Discount
           const discountMultiplier = 0.88;
           finalPrice = Math.round(data.basePrice * discountMultiplier);
-          this.logger.log(`Discount Applied! Final Price: ${finalPrice}`);
+          this.logger.log(
+            `${logPrefix} Discount Applied! Final Price: ${finalPrice}`,
+          );
         }
       } else {
         this.logger.log(
-          `Booking ${data.bookingId} does not qualify for discount. Proceeding with Standard Price.`,
+          `${logPrefix} Does not qualify for discount. Proceeding with Standard Price.`,
         );
         isAllowed = true;
         finalPrice = data.basePrice;
@@ -136,14 +141,16 @@ export class DiscountService {
         isAllowed,
         finalPrice,
         reason,
+        traceId,
       });
     } catch (error) {
-      this.logger.error(`Error in business logic: ${error}`);
+      this.logger.error(`${logPrefix} Error in business logic: ${error}`);
 
       // Compensate System Failure
+      // Note: Assuming for now that we are not using Lua script.
       // If we crashed here, we need to roll back the Redis increment if we did one.
       if (quotaConsumed && redisKey) {
-        this.logger.warn(`Compensating: Rolling back quota for ${bookingId}`);
+        this.logger.warn(`${logPrefix} Compensating: Rolling back quota.`);
         await this.redis.decr(redisKey);
       }
 
@@ -154,21 +161,31 @@ export class DiscountService {
     }
   }
 
-  private async emitResult(payload: DiscountProcessedDto) {
+  async emitResult(payload: DiscountProcessedDto) {
     await lastValueFrom(this.client.emit(DISCOUNT_PROCESSED_EVENT, payload));
   }
 
-  private checkBirthday(dobString: string, todayIST: Date): boolean {
+  private checkBirthday(
+    dobString: string,
+    todayIST: Date,
+    logPrefix: string,
+  ): boolean {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const [year, month, day] = dobString.split('-').map(Number);
+      const dob = parse(dobString, 'yyyy-MM-dd', new Date());
 
-      const currentMonth = todayIST.getMonth() + 1;
+      if (!isValid(dob)) {
+        this.logger.warn(
+          `${logPrefix} Invalid DOB format received: ${dobString}. Defaulting to no discount.`,
+        );
+        return false;
+      }
+
+      const currentMonth = todayIST.getMonth(); // 0-indexed (Jan = 0)
       const currentDay = todayIST.getDate();
 
-      return currentDay === day && currentMonth === month;
-    } catch {
-      this.logger.error(`Invalid DOB format: ${dobString}`);
+      return dob.getDate() === currentDay && dob.getMonth() === currentMonth;
+    } catch (error) {
+      this.logger.error(`${logPrefix} Error parsing DOB: ${dobString}`, error);
       return false;
     }
   }
