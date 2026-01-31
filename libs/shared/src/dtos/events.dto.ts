@@ -5,6 +5,7 @@ export class ServiceItemDto {
 
 export class BookingCreatedDto {
   bookingId: string;
+  userName: string;
   userId: string;
   gender: string;
   dob: string; // Format: YYYY-MM-DD

@@ -26,6 +26,9 @@ export class DiscountService {
     this.redis = new Redis({
       host: this.configService.get<string>('REDIS_HOST', 'localhost'),
       port: this.configService.get<number>('REDIS_PORT', 6375),
+
+      maxRetriesPerRequest: 1,
+      retryStrategy: () => null,
     });
   }
 
@@ -66,7 +69,7 @@ export class DiscountService {
         'invalid_user',
       );
 
-      if (data.userId === bannedUser) {
+      if (data.userName === bannedUser) {
         this.logger.warn(
           `${logPrefix} Booking REJECTED: User ${bannedUser} is banned.`,
         );

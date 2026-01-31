@@ -100,6 +100,7 @@ export class BookingService {
     const event: BookingCreatedDto = {
       bookingId: savedBooking.id,
       userId: userId,
+      userName: data.userName,
       gender: data.gender,
       dob: data.dob,
       services: selectedServices,
