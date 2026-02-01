@@ -15,6 +15,15 @@ import { toZonedTime } from 'date-fns-tz';
 import Redis from 'ioredis';
 import { lastValueFrom } from 'rxjs';
 
+type DiscountProcessingContext = {
+  finalPrice: number;
+  isAllowed: boolean;
+  reason: string;
+  quotaConsumed: boolean;
+  redisKey: string;
+  idempotencyKey: string;
+};
+
 @Injectable()
 export class DiscountService {
   private readonly logger = new Logger(DiscountService.name);
@@ -39,187 +48,211 @@ export class DiscountService {
     const { bookingId, traceId } = data;
     const logPrefix = `[TraceID: ${traceId}]`;
 
-    const idempotencyKey = `processed_booking:${bookingId}`;
-
-    const isProcessed = await this.redis.set(
-      idempotencyKey,
-      '1',
-      'EX',
-      this.IDEMPOTENCY_TTL,
-      'NX', // Only set if Not exists - idempotency check
-    );
-
-    if (!isProcessed) {
-      this.logger.warn(
-        `${logPrefix} Duplicate event detected for Booking ${bookingId}. Skipping.`,
-      );
-      return;
-    }
-
-    this.logger.log(
-      `${logPrefix} Processing discount logic for Booking ${bookingId}...`,
-    );
-
-    let isAllowed = true;
-    let finalPrice = data.basePrice;
-    let quotaConsumed = false;
-    let reason = '';
-    let redisKey = '';
+    const context: DiscountProcessingContext = {
+      finalPrice: data.basePrice,
+      isAllowed: true,
+      reason: '',
+      quotaConsumed: false,
+      redisKey: '',
+      idempotencyKey: `processed_booking:${bookingId}`,
+    };
 
     try {
-      await this.emitIntermediaryState({
+      await this.acquireIdempotencyLock(
+        context.idempotencyKey,
         bookingId,
-        state: DiscountProcessingStates.VALIDATING_ELIGIBILITY,
-        message: 'Validating discount eligibility...',
+        traceId,
+      );
+      await this.validateEligibility(data, bookingId, traceId, context);
+      await this.processQuotaAndDiscount(
+        data,
+        bookingId,
+        traceId,
+        logPrefix,
+        context,
+      );
+      await this.emitResult({
+        bookingId,
+        isAllowed: context.isAllowed,
+        finalPrice: context.finalPrice,
+        reason: context.reason,
         traceId,
       });
+    } catch (err) {
+      await this.handleSystemFailure(bookingId, traceId, context);
+      throw err;
+    }
+  }
 
-      const bannedUser = this.configService.get<string>(
-        'BANNED_USER',
-        'invalid_user',
+  private async acquireIdempotencyLock(
+    key: string,
+    bookingId: string,
+    traceId: string,
+  ) {
+    try {
+      const result = await this.redis.set(
+        key,
+        '1',
+        'EX',
+        this.IDEMPOTENCY_TTL,
+        'NX',
       );
 
-      if (data.userName === bannedUser) {
-        this.logger.warn(
-          `${logPrefix} Booking REJECTED: User ${bannedUser} is banned.`,
-        );
-        await this.emitResult({
-          bookingId,
-          isAllowed: false,
-          finalPrice: data.basePrice,
-          reason: 'User is not authorized (Simulated Failure)',
-          traceId,
-        });
-        return;
+      if (!result) {
+        throw new Error('Duplicate event');
       }
+    } catch (e) {
+      await this.emitIntermediaryState({
+        bookingId,
+        state: DiscountProcessingStates.SYSTEM_ERROR,
+        message: 'Redis unavailable during idempotency check',
+        traceId,
+      });
+      throw e;
+    }
+  }
 
-      const now = new Date();
-      const nowIST = toZonedTime(now, this.TIMEZONE);
+  private async validateEligibility(
+    data: BookingCreatedDto,
+    bookingId: string,
+    traceId: string,
+    context: DiscountProcessingContext,
+  ) {
+    await this.emitIntermediaryState({
+      bookingId,
+      state: DiscountProcessingStates.VALIDATING_ELIGIBILITY,
+      message: 'Validating discount eligibility...',
+      traceId,
+    });
 
-      // RULE R1: Female Birthday OR High Value
-      const isFemale = data.gender.toLowerCase() === 'female';
-      const isBirthday = this.checkBirthday(data.dob, nowIST, logPrefix);
-      const isHighValue = data.basePrice > 1000;
+    const bannedUser = this.configService.get<string>(
+      'BANNED_USER',
+      'invalid_user',
+    );
 
-      const qualifiesForDiscount = (isFemale && isBirthday) || isHighValue;
-
-      if (qualifiesForDiscount) {
-        this.logger.log(
-          `${logPrefix} Qualifies for R1 Discount (Female+Bday: ${isFemale && isBirthday}, HighValue: ${isHighValue}). Checking Quota...`,
-        );
-
-        await this.emitIntermediaryState({
-          bookingId,
-          state: DiscountProcessingStates.CHECKING_QUOTA,
-          message: 'Checking daily discount quota availability...',
-          traceId,
-        });
-
-        const todayString = format(nowIST, 'yyyy-MM-dd');
-        redisKey = `discount_quota:${todayString}`;
-
-        const currentCount = await this.redis.incr(redisKey);
-        quotaConsumed = true; // Mark that we used a spot
-
-        // Set TTL if this is the first booking of the day
-        if (currentCount === 1) {
-          await this.redis.expire(redisKey, 86400 * 2);
-        }
-
-        const limit = this.configService.get<number>('R2_QUOTA_LIMIT', 100);
-
-        this.logger.log(
-          `${logPrefix} Daily Quota Check [${todayString}]: ${currentCount}/${limit}`,
-        );
-
-        if (currentCount > limit) {
-          isAllowed = false;
-          reason = 'Daily discount quota reached. Please try again tomorrow.';
-          this.logger.warn(`${logPrefix} REJECTED: ${reason}`);
-
-          this.logger.warn(
-            `${logPrefix} QUOTA EXCEEDED - TRIGGERING COMPENSATION`,
-          );
-          this.logger.warn(
-            `${logPrefix} Rolling back quota reservation (decrementing from ${currentCount} to ${currentCount - 1})`,
-          );
-
-          await this.emitIntermediaryState({
-            bookingId,
-            state: DiscountProcessingStates.COMPENSATING,
-            message: 'Quota exceeded - Rolling back quota reservation',
-            traceId,
-          });
-
-          // Compensate immediately for the failed business check
-          await this.redis.decr(redisKey);
-          quotaConsumed = false;
-        } else {
-          await this.emitIntermediaryState({
-            bookingId,
-            state: DiscountProcessingStates.APPLYING_DISCOUNT,
-            message: `Applying 12% discount (Quota: ${currentCount}/${limit})`,
-            traceId,
-          });
-
-          // Apply 12% Discount
-          const discountMultiplier = 0.88;
-          finalPrice = Math.round(data.basePrice * discountMultiplier);
-          this.logger.log(
-            `${logPrefix} Discount Applied! Final Price: ${finalPrice}`,
-          );
-        }
-      } else {
-        await this.emitIntermediaryState({
-          bookingId,
-          state: DiscountProcessingStates.NO_DISCOUNT,
-          message: 'No discount applicable - Standard pricing applied',
-          traceId,
-        });
-
-        this.logger.log(
-          `${logPrefix} Does not qualify for discount. Proceeding with Standard Price.`,
-        );
-        isAllowed = true;
-        finalPrice = data.basePrice;
-      }
+    if (data.userName === bannedUser) {
+      context.isAllowed = false;
+      context.reason = 'User is not authorized (Simulated Failure)';
 
       await this.emitResult({
         bookingId,
-        isAllowed,
-        finalPrice,
-        reason,
+        isAllowed: false,
+        finalPrice: data.basePrice,
+        reason: context.reason,
         traceId,
       });
-    } catch (error) {
-      this.logger.error(`${logPrefix} Error in business logic: ${error}`);
 
-      // Compensate System Failure
-      // Note: Assuming for now that we are not using Lua script.
-      // If we crashed here, we need to roll back the Redis increment if we did one.
-      if (quotaConsumed && redisKey) {
-        this.logger.warn(`${logPrefix} SYSTEM ERROR - TRIGGERING COMPENSATION`);
-        this.logger.warn(
-          `${logPrefix} Rolling back quota due to processing failure`,
-        );
+      throw new Error('Banned user');
+    }
+  }
 
+  private async processQuotaAndDiscount(
+    data: BookingCreatedDto,
+    bookingId: string,
+    traceId: string,
+    logPrefix: string,
+    context: DiscountProcessingContext,
+  ) {
+    const nowIST = toZonedTime(new Date(), this.TIMEZONE);
+
+    const qualifies =
+      (data.gender.toLowerCase() === 'female' &&
+        this.checkBirthday(data.dob, nowIST, logPrefix)) ||
+      data.basePrice > 1000;
+
+    if (!qualifies) {
+      await this.emitIntermediaryState({
+        bookingId,
+        state: DiscountProcessingStates.NO_DISCOUNT,
+        message: 'No discount applicable',
+        traceId,
+      });
+      return;
+    }
+
+    await this.emitIntermediaryState({
+      bookingId,
+      state: DiscountProcessingStates.CHECKING_QUOTA,
+      message: 'Checking daily discount quota availability...',
+      traceId,
+    });
+
+    const today = format(nowIST, 'yyyy-MM-dd');
+    context.redisKey = `discount_quota:${today}`;
+
+    let count: number;
+
+    try {
+      count = await this.redis.incr(context.redisKey);
+      context.quotaConsumed = true;
+      if (count === 1) {
+        await this.redis.expire(context.redisKey, 86400 * 2);
+      }
+    } catch (e) {
+      await this.emitIntermediaryState({
+        bookingId,
+        state: DiscountProcessingStates.SYSTEM_ERROR,
+        message: 'Redis unavailable during quota increment',
+        traceId,
+      });
+      throw e;
+    }
+
+    const limit = this.configService.get<number>('R2_QUOTA_LIMIT', 100);
+
+    if (count > limit) {
+      context.isAllowed = false;
+      context.reason =
+        'Daily discount quota reached. Please try again tomorrow.';
+
+      await this.emitIntermediaryState({
+        bookingId,
+        state: DiscountProcessingStates.COMPENSATING,
+        message: 'Quota exceeded - rolling back quota',
+        traceId,
+      });
+
+      try {
+        await this.redis.decr(context.redisKey);
+        context.quotaConsumed = false;
+        // eslint-disable-next-line no-empty
+      } catch {}
+
+      return;
+    }
+
+    await this.emitIntermediaryState({
+      bookingId,
+      state: DiscountProcessingStates.APPLYING_DISCOUNT,
+      message: `Applying 12% discount (${count}/${limit})`,
+      traceId,
+    });
+
+    context.finalPrice = Math.round(data.basePrice * 0.88);
+  }
+
+  private async handleSystemFailure(
+    bookingId: string,
+    traceId: string,
+    context: DiscountProcessingContext,
+  ) {
+    if (context.quotaConsumed && context.redisKey) {
+      try {
         await this.emitIntermediaryState({
           bookingId,
           state: DiscountProcessingStates.COMPENSATING,
-          message: 'System error - Rolling back quota reservation',
+          message: 'System error - rolling back quota',
           traceId,
         });
-
-        this.logger.warn(`${logPrefix} Compensating: Rolling back quota.`);
-        await this.redis.decr(redisKey);
-      }
-
-      // Remove idempotency key so we can retry this message
-      await this.redis.del(idempotencyKey);
-      this.logger.warn(`${logPrefix} Compensation completed.`);
-
-      throw error;
+        await this.redis.decr(context.redisKey);
+        // eslint-disable-next-line no-empty
+      } catch {}
     }
+
+    try {
+      await this.redis.del(context.idempotencyKey);
+      // eslint-disable-next-line no-empty
+    } catch {}
   }
 
   async emitResult(payload: DiscountProcessedDto) {
