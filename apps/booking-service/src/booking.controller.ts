@@ -1,4 +1,9 @@
-import { DISCOUNT_PROCESSED_EVENT, DiscountProcessedDto } from '@app/shared';
+import {
+  DISCOUNT_PROCESSED_EVENT,
+  DISCOUNT_PROCESSING_EVENT,
+  DiscountProcessedDto,
+  DiscountProcessingDto,
+} from '@app/shared';
 import {
   Body,
   Controller,
@@ -49,6 +54,24 @@ export class BookingController {
     } catch (error) {
       this.logger.error(`Error processing discount result: ${error}`);
 
+      channel.nack(originalMsg, false, false);
+    }
+  }
+
+  @EventPattern(DISCOUNT_PROCESSING_EVENT)
+  async handleStateUpdate(
+    @Payload()
+    data: DiscountProcessingDto,
+    @Ctx() context: RmqContext,
+  ) {
+    const channel = context.getChannelRef() as Channel;
+    const originalMsg = context.getMessage() as Message;
+
+    try {
+      await this.bookingService.handleStateUpdate(data);
+      channel.ack(originalMsg);
+    } catch (error) {
+      this.logger.error(`Error processing state update: ${error}`);
       channel.nack(originalMsg, false, false);
     }
   }

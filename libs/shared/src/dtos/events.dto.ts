@@ -21,3 +21,19 @@ export class DiscountProcessedDto {
   reason?: string;
   traceId: string;
 }
+
+export enum DiscountProcessingStates {
+  VALIDATING_ELIGIBILITY = 'VALIDATING_ELIGIBILITY',
+  CHECKING_QUOTA = 'CHECKING_QUOTA',
+  COMPENSATING = 'COMPENSATING',
+  APPLYING_DISCOUNT = 'APPLYING_DISCOUNT',
+  NO_DISCOUNT = 'NO_DISCOUNT',
+  SYSTEM_ERROR = 'SYSTEM_ERROR',
+}
+
+export class DiscountProcessingDto {
+  bookingId: string;
+  state: DiscountProcessingStates;
+  message: string;
+  traceId: string;
+}

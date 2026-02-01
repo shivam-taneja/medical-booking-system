@@ -1,7 +1,10 @@
 import {
   BookingCreatedDto,
   DISCOUNT_PROCESSED_EVENT,
+  DISCOUNT_PROCESSING_EVENT,
   DiscountProcessedDto,
+  DiscountProcessingDto,
+  DiscountProcessingStates,
   RABBITMQ_SERVICE,
 } from '@app/shared';
 import { Inject, Injectable, Logger } from '@nestjs/common';
@@ -64,6 +67,13 @@ export class DiscountService {
     let redisKey = '';
 
     try {
+      await this.emitIntermediaryState({
+        bookingId,
+        state: DiscountProcessingStates.VALIDATING_ELIGIBILITY,
+        message: 'Validating discount eligibility...',
+        traceId,
+      });
+
       const bannedUser = this.configService.get<string>(
         'BANNED_USER',
         'invalid_user',
@@ -98,6 +108,13 @@ export class DiscountService {
           `${logPrefix} Qualifies for R1 Discount (Female+Bday: ${isFemale && isBirthday}, HighValue: ${isHighValue}). Checking Quota...`,
         );
 
+        await this.emitIntermediaryState({
+          bookingId,
+          state: DiscountProcessingStates.CHECKING_QUOTA,
+          message: 'Checking daily discount quota availability...',
+          traceId,
+        });
+
         const todayString = format(nowIST, 'yyyy-MM-dd');
         redisKey = `discount_quota:${todayString}`;
 
@@ -120,10 +137,31 @@ export class DiscountService {
           reason = 'Daily discount quota reached. Please try again tomorrow.';
           this.logger.warn(`${logPrefix} REJECTED: ${reason}`);
 
+          this.logger.warn(
+            `${logPrefix} QUOTA EXCEEDED - TRIGGERING COMPENSATION`,
+          );
+          this.logger.warn(
+            `${logPrefix} Rolling back quota reservation (decrementing from ${currentCount} to ${currentCount - 1})`,
+          );
+
+          await this.emitIntermediaryState({
+            bookingId,
+            state: DiscountProcessingStates.COMPENSATING,
+            message: 'Quota exceeded - Rolling back quota reservation',
+            traceId,
+          });
+
           // Compensate immediately for the failed business check
           await this.redis.decr(redisKey);
           quotaConsumed = false;
         } else {
+          await this.emitIntermediaryState({
+            bookingId,
+            state: DiscountProcessingStates.APPLYING_DISCOUNT,
+            message: `Applying 12% discount (Quota: ${currentCount}/${limit})`,
+            traceId,
+          });
+
           // Apply 12% Discount
           const discountMultiplier = 0.88;
           finalPrice = Math.round(data.basePrice * discountMultiplier);
@@ -132,6 +170,13 @@ export class DiscountService {
           );
         }
       } else {
+        await this.emitIntermediaryState({
+          bookingId,
+          state: DiscountProcessingStates.NO_DISCOUNT,
+          message: 'No discount applicable - Standard pricing applied',
+          traceId,
+        });
+
         this.logger.log(
           `${logPrefix} Does not qualify for discount. Proceeding with Standard Price.`,
         );
@@ -153,12 +198,25 @@ export class DiscountService {
       // Note: Assuming for now that we are not using Lua script.
       // If we crashed here, we need to roll back the Redis increment if we did one.
       if (quotaConsumed && redisKey) {
+        this.logger.warn(`${logPrefix} SYSTEM ERROR - TRIGGERING COMPENSATION`);
+        this.logger.warn(
+          `${logPrefix} Rolling back quota due to processing failure`,
+        );
+
+        await this.emitIntermediaryState({
+          bookingId,
+          state: DiscountProcessingStates.COMPENSATING,
+          message: 'System error - Rolling back quota reservation',
+          traceId,
+        });
+
         this.logger.warn(`${logPrefix} Compensating: Rolling back quota.`);
         await this.redis.decr(redisKey);
       }
 
       // Remove idempotency key so we can retry this message
       await this.redis.del(idempotencyKey);
+      this.logger.warn(`${logPrefix} Compensation completed.`);
 
       throw error;
     }
@@ -166,6 +224,10 @@ export class DiscountService {
 
   async emitResult(payload: DiscountProcessedDto) {
     await lastValueFrom(this.client.emit(DISCOUNT_PROCESSED_EVENT, payload));
+  }
+
+  private async emitIntermediaryState(payload: DiscountProcessingDto) {
+    await lastValueFrom(this.client.emit(DISCOUNT_PROCESSING_EVENT, payload));
   }
 
   private checkBirthday(

@@ -2,6 +2,7 @@ import {
   BOOKING_CREATED_EVENT,
   BookingCreatedDto,
   DiscountProcessedDto,
+  DiscountProcessingDto,
   RABBITMQ_SERVICE,
   ServiceItemDto,
 } from '@app/shared';
@@ -181,5 +182,30 @@ export class BookingService {
     await this.bookingRepo.save(booking);
 
     this.logger.log(`${logPrefix} Booking ${booking.id} updated to ${status}`);
+  }
+
+  async handleStateUpdate(payload: DiscountProcessingDto) {
+    const { traceId, bookingId, state, message } = payload;
+    const logPrefix = `[TraceID: ${traceId}]`;
+
+    this.logger.log(
+      `${logPrefix} State update for ${bookingId}: [${state}] ${message}`,
+    );
+
+    const booking = await this.bookingRepo.findOne({
+      where: { id: bookingId },
+    });
+
+    if (!booking) {
+      this.logger.error(
+        `${logPrefix} Booking ${bookingId} not found for state update`,
+      );
+      return;
+    }
+
+    const logEntry = `[${new Date().toISOString()}] [${state}] ${message}`;
+    booking.history.push(logEntry);
+
+    await this.bookingRepo.save(booking);
   }
 }
